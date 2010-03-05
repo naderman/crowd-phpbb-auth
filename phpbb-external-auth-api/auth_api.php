@@ -16,7 +16,7 @@ $allowed_ips = array(
 );
 
 // make sure this is only accessible from our own servers
-if (!isset($allowed_ips[$_SERVER['REMOTE_ADDR']]))
+if (empty($_SERVER['REMOTE_ADDR']) || !isset($allowed_ips[$_SERVER['REMOTE_ADDR']]))
 {
     exit;
 }
@@ -67,7 +67,7 @@ unset($dbpasswd);
 
 $config = $cache->obtain_config();
 
-$action = request_var('action', '');
+$action = basename(request_var('action', ''));
 
 if (function_exists('phpbb_external_auth_api_' . $action))
 {
@@ -346,7 +346,7 @@ function phpbb_external_auth_api_UserMemberships()
         }
         else
         {
-            $output .= $row['group_name'] . "\n";
+            $output .= _api_get_group_name($row['group_name']) . "\n";
         }
     }
 
@@ -438,13 +438,23 @@ class SearchRestriction
 
         $where = $column . ' ';
 
+		// remove alias to get plain column name
+		$plain_column = (strpos($column, '.') !== false) ? substr($column, strpos($column, '.') + 1) : $column;
+
+		// Adjust value if we need to search for group name.
+		if ($plain_column == 'group_name')
+		{
+			// Define true as second parameter to reverse the mapping (English name to name stored in database)
+			$value = _api_get_group_name($value, true);
+		}
+
         switch ($compareMode)
         {
             case 'CONTAINS':
                 $where .= $db->sql_like_expression($db->any_char . $value . $db->any_char);
             break;
             case 'EXACTLY_MATCHES':
-                if ($column == 'user_type')
+                if ($plain_column == 'user_type')
                 {
                     if ($value == 'true')
                     {
@@ -476,6 +486,9 @@ class SearchRestriction
     }
 }
 
+/**
+* @todo use base URL for avatars?
+*/
 function user_row_line($row)
 {
     global $config, $phpEx, $phpbb_root_path;
@@ -525,6 +538,9 @@ function user_row_line($row)
 
 function group_row_line($row)
 {
+	// Return correct group name
+	$row['group_name'] = _api_get_group_name($row['group_name']);
+
     $output  = $row['group_id'] . "\t";
     $output .= html_entity_decode($row['group_name'], ENT_COMPAT, 'UTF-8') . "\t";
     $output .= html_entity_decode($row['group_desc'], ENT_COMPAT, 'UTF-8') . "\t";
@@ -533,3 +549,27 @@ function group_row_line($row)
     return $output;
 }
 
+/**
+* Get correct group name. Prefixed with _api_ to not conflict with phpBB funciton get_group_name()
+*/
+function _api_get_group_name($group_name, $reverse = false)
+{
+	// Special group name mapping
+	$special_groups = array(
+		'ADMINISTRATORS'		=> 'Administrators',
+		'BOTS'					=> 'Bots',
+		'GUESTS'				=> 'Guests',
+		'REGISTERED'			=> 'Registered users',
+		'REGISTERED_COPPA'		=> 'Registered COPPA users',
+		'GLOBAL_MODERATORS'		=> 'Global moderators',
+		'NEWLY_REGISTERED'		=> 'Newly registered users',
+	);
+
+	// Resolve english names to database names?
+	if ($reverse === true)
+	{
+		$special_groups = array_flip($special_groups);
+	}
+
+	return (isset($special_groups[$group_name])) ? $special_groups[$group_name] : $group_name;
+}
