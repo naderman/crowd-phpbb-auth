@@ -303,8 +303,14 @@ function phpbb_external_auth_api_searchGroups()
 	$output = '';
 	while ($row = $db->sql_fetchrow($result))
 	{
-		/*if ($return_type == 'ENTITY') - apparently NAME is not used*/
-		$output .= group_row_line($row) . "\n";
+		if ($return_type == 'ENTITY')
+		{
+			$output .= group_row_line($row) . "\n";
+		}
+		else
+		{
+			$output .= _api_get_group_name($row['group_name']) . "\n";
+		}
 	}
 
 	$db->sql_freeresult($result);

@@ -480,7 +480,7 @@ public class phpBBDirectoryServer implements RemoteDirectory
         {
             String line = (String) it.next();
 
-            if (query.getReturnType() == ReturnType.ENTITY || query instanceof UserQuery || query instanceof GroupQuery)
+            if (query.getReturnType() == ReturnType.ENTITY || query instanceof UserQuery)
             {
                 try
                 {
