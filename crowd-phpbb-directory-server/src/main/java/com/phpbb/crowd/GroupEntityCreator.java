@@ -39,9 +39,9 @@ public class GroupEntityCreator extends EntityCreator
 
         group.setActive(true);
         // description might not be set
-        if (values.length > 2)
+        if (values.length > 3)
         {
-            group.setDescription(values[2]);
+            group.setDescription(values[3]);
         }
 
         return group;

@@ -540,8 +540,8 @@ function group_row_line($row)
 
 	$output  = $row['group_id'] . "\t";
 	$output .= html_entity_decode($row['group_name'], ENT_COMPAT, 'UTF-8') . "\t";
-	$output .= html_entity_decode($row['group_desc'], ENT_COMPAT, 'UTF-8') . "\t";
-	$output .= $row['group_type'] . "\n";
+	$output .= $row['group_type'] . "\t";
+	$output .= html_entity_decode($row['group_desc'], ENT_COMPAT, 'UTF-8') . "\n";
 
 	return $output;
 }
