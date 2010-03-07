@@ -1,18 +1,40 @@
 <?php
 /**
- *
- * @package ExternalAuthAPI
- * @copyright (c) 2010 phpBB Group
- * @license http://opensource.org/licenses/gpl-license.php
- *          GNU Public License version 2 or 3 at your option
- *
- */
+*
+* @package ExternalAuthAPI
+* @copyright (c) 2010 phpBB Group
+* @license http://opensource.org/licenses/gpl-license.php GNU Public License version 2 or 3 at your option
+*
+*/
 
 /**
- * @ignore
- */
+* @ignore
+*/
+
+// Base avatar URL
+define('AVATAR_BASE_URL', '');
+
+// Debug calls? Writes to log file, set to false to disable
+define('DEBUG_API', false);
+
+// Do not write to log file if output has more than 50 entries
+define('DEBUG_API_LIMIT_OUTPUT', 50);
+
+// Allowed IP's
 $allowed_ips = array(
-    '127.0.0.1' => true,
+	'127.0.0.1' => true,
+);
+
+// Groups we want to not have in our directory
+// This is extremely useful, because this ensures a clean directory - Atlassian Tools try to index and check every single group, regardless of it's status/connection
+$exclude_groups = array(
+	228654, // Bots
+	228649, // Guests
+	228735, // Newly Registered Users
+	228651, // COPPA
+	228725, // on moderation queue
+	228695, // without edit
+	84421, // Former Team Members
 );
 
 // make sure this is only accessible from our own servers
@@ -22,7 +44,7 @@ if (empty($_SERVER['REMOTE_ADDR']) || !isset($allowed_ips[$_SERVER['REMOTE_ADDR'
 }
 
 define('IN_PHPBB', true);
-$phpbb_root_path = (defined('PHPBB_ROOT_PATH')) ? PHPBB_ROOT_PATH : './';
+$phpbb_root_path = (defined('PHPBB_ROOT_PATH')) ? PHPBB_ROOT_PATH : './../community/';
 $phpEx = substr(strrchr(__FILE__, '.'), 1);
 
 // Report all errors, except notices and deprecation messages
@@ -67,14 +89,22 @@ unset($dbpasswd);
 
 $config = $cache->obtain_config();
 
+// Initialize auth API
+$api = new phpbb_auth_api(AVATAR_BASE_URL, DEBUG_API, DEBUG_API_LIMIT_OUTPUT);
+
+// Tell the API to exclude groups
+$api->exclude_groups($exclude_groups);
+
 $action = basename(request_var('action', ''));
 
-if (function_exists('phpbb_external_auth_api_' . $action))
+// First wanted to implement this with __call(), but then there is no way for auto completion in modern Editors
+if ($api->init($action))
 {
-	$result = call_user_func('phpbb_external_auth_api_' . $action);
+	$api->$action();
 }
 
-echo $result;
+echo $api->get_output();
+$api->close();
 
 if (!empty($cache))
 {
@@ -84,288 +114,561 @@ $db->sql_close();
 
 exit;
 
-// phpbb_external_auth_api_ function definitions
-
-function phpbb_external_auth_api_findUserByName()
+/**
+* Authentication to Crowd
+*/
+class phpbb_auth_api
 {
-	global $db;
-	$name = request_var('name', '', true);
+	protected $avatar_base_url = false;
+	protected $debug_file = false;
+	protected $debug_limit = false;
 
-	return 'not implemented';
-}
+	protected $exclude_group_ids = array();
+	protected $fp = false;
+	protected $output = array();
 
-function phpbb_external_auth_api_authenticate()
-{
-	global $db, $auth, $config, $phpEx, $phpbb_root_path;
+	protected $user_query_sql = false;
 
-	$username = request_var('name', '', true);
-	$password = request_var('credential', '', true);
+	// For faster access
+	protected $special_groups = array();
+	protected $special_groups_reverse = array();
 
-	$err = '';
-
-	// If authentication is successful we redirect user to previous page
-	$method = trim(basename($config['auth_method']));
-	include_once($phpbb_root_path . 'includes/auth/auth_' . $method . '.' . $phpEx);
-
-	$method = 'login_' . $method;
-	if (!function_exists($method))
+	public function __construct($avatar_base_url, $debug_file, $debug_limit)
 	{
-		return "error\nNO_AUTH";
+		$this->avatar_base_url = $avatar_base_url;
+		$this->debug_file = $debug_file;
+		$this->debug_limit = $debug_limit;
+
+		// Special group name mapping
+		$this->special_groups = array(
+			'ADMINISTRATORS'		=> 'Administrators',
+			'BOTS'					=> 'Bots',
+			'GUESTS'				=> 'Guests',
+			'REGISTERED'			=> 'Registered users',
+			'REGISTERED_COPPA'		=> 'Registered COPPA users',
+			'GLOBAL_MODERATORS'		=> 'Global moderators',
+			'NEWLY_REGISTERED'		=> 'Newly registered users',
+		);
+
+		$this->special_groups_reverse = array_flip($this->special_groups);
 	}
 
-	$result = $method($username, $password);
-
-	// If the auth module wants us to create an empty profile do so and then treat the status as LOGIN_SUCCESS
-	if ($login['status'] == LOGIN_SUCCESS_CREATE_PROFILE)
+	public function implemented()
 	{
-		// we are going to use the user_add function so include functions_user.php if it wasn't defined yet
-		if (!function_exists('user_add'))
-		{
-			include($phpbb_root_path . 'includes/functions_user.' . $phpEx);
-		}
-
-		user_add($login['user_row'], (isset($login['cp_data'])) ? $login['cp_data'] : false);
-
-		$sql = 'SELECT user_id, username, user_password, user_passchg, user_email, user_type
-			FROM ' . USERS_TABLE . "
-			WHERE username_clean = '" . $db->sql_escape(utf8_clean_string($username)) . "'";
-		$result = $db->sql_query($sql);
-		$row = $db->sql_fetchrow($result);
-		$db->sql_freeresult($result);
-
-		if (!$row)
-		{
-			return "error\nFailed to create profile";
-		}
-
-		$result = array(
-			'status'    => LOGIN_SUCCESS,
-			'error_msg' => false,
-			'user_row'  => $row,
+		return array(
+			'findUsersByName',
+			'authenticate',
+			'searchUsers',
+			'searchGroups',
+			'groupMembers',
+			'UserMemberships',
 		);
 	}
 
-	// The result parameter is always an array, holding the relevant information...
-	if ($result['status'] == LOGIN_SUCCESS)
+	public function init($action)
 	{
-		// get avatar url
-		$sql = 'SELECT user_avatar, user_avatar_type, user_avatar_width, user_avatar_height
+		$this->output = array();
+
+		if (!method_exists($this, $action))
+		{
+			return false;
+		}
+
+		if ($this->debug_file && !$this->fp)
+		{
+			$this->fp = fopen($this->debug_file, 'a');
+			$this->debug('INIT', '');
+			$this->debug('post', $_POST);
+		}
+		return true;
+	}
+
+	public function close()
+	{
+		if ($this->debug_file && $this->fp)
+		{
+			$this->debug('output', $this->output);
+			$this->debug('FINISHED', '');
+			fclose($this->fp);
+		}
+	}
+
+	public function get_output()
+	{
+		return implode("\n", $this->output);
+	}
+
+	public function debug($action, $data)
+	{
+		if (!$this->debug_file) return;
+
+		fwrite($this->fp, '[' . date('Y-m-d H:i:s') . '] [' . $action . '] ');
+		if (is_array($data))
+		{
+			if ($this->debug_limit && sizeof($data) > $this->debug_limit)
+			{
+				fwrite($this->fp, 'Dataset: ' . sizeof($data) . ' Elements.');
+				$data = array();
+			}
+
+			if (!empty($data['credential']))
+			{
+				$data['credential'] = '***';
+			}
+
+			foreach ($data as $key => $element)
+			{
+				fwrite($this->fp, "\n[" . date('Y-m-d H:i:s') . '] [' . $key . '] => ' . $element);
+			}
+		}
+		else
+		{
+			fwrite($this->fp, $data);
+		}
+
+		fwrite($this->fp, "\n");
+	}
+
+	protected function add($line)
+	{
+		$this->output[] = $line;
+		return $this;
+	}
+
+	public function exclude_groups($group_ids)
+	{
+		$this->exclude_group_ids = $group_ids;
+	}
+
+	protected function groups_query($sql_prefix = '', $sql_alias = '')
+	{
+		if (empty($this->exclude_group_ids))
+		{
+			return '';
+		}
+
+		$sql = ($sql_prefix) ? ' ' . $sql_prefix . ' ' : '';
+		$sql .= ($sql_alias) ? $sql_alias . '.' : '';
+		$sql .= 'group_id NOT IN (' . implode(', ', $this->exclude_group_ids) . ')';
+
+		return $sql;
+	}
+
+	protected function users_query($sql_prefix = '', $sql_alias = '')
+	{
+		global $db;
+
+		if ($this->user_query_sql === false)
+		{
+			// Get banned user ids
+			$banned_user_ids = array();
+
+			$sql = 'SELECT ban_userid FROM ' . BANLIST_TABLE . '
+				WHERE ban_userid <> 0
+					AND ban_exclude = 0';
+			$result = $db->sql_query($sql);
+			while ($row = $db->sql_fetchrow($result))
+			{
+				$banned_user_ids[] = (int) $row['ban_userid'];
+			}
+			$db->sql_freeresult($result);
+
+			// Check for last login date. ;) At least within the last 2 years.
+			// Use the same timestamp for a day, to let the query be cached later maybe. :)
+			$years = 2;
+			$last_logged_in = strtotime(date('Y-m-d')) - ($years * 365 * 24 * 60 * 60);
+
+			$this->user_query_sql = array();
+
+			if (sizeof($banned_user_ids))
+			{
+				$this->user_query_sql[] = array('key' => 'user_id', 'query' => 'NOT IN (' . implode(', ', $banned_user_ids) . ')');
+			}
+
+			$this->user_query_sql[] = array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in);
+		}
+
+		// Return correct query
+		if (empty($this->user_query_sql))
+		{
+			return '';
+		}
+
+		$sql_ary = array();
+		foreach ($this->user_query_sql as $query)
+		{
+			$sql_ary[] = (($sql_alias) ? $sql_alias . '.' : '') . $query['key'] . ' ' . $query['query'];
+		}
+
+		return (($sql_prefix) ? ' ' . $sql_prefix . ' ' : '') . implode(' AND ', $sql_ary);
+	}
+
+	protected function get_user_name($user_name)
+	{
+		$user_name = html_entity_decode($user_name, ENT_COMPAT, 'UTF-8');
+
+		if (preg_match('/[\x01-\x08]/', $user_name))
+		{
+			return false;
+		}
+
+		return $user_name;
+	}
+
+	// not implemented
+	public function findUserByName()
+	{
+		$name = request_var('name', '', true);
+		$this->add_line('not implemented');
+	}
+
+	public function authenticate()
+	{
+		global $db, $auth, $config, $phpEx, $phpbb_root_path;
+
+		$username = request_var('name', '', true);
+		$password = request_var('credential', '', true);
+
+		$err = '';
+
+		// If authentication is successful we redirect user to previous page
+		$method = trim(basename($config['auth_method']));
+		include_once($phpbb_root_path . 'includes/auth/auth_' . $method . '.' . $phpEx);
+
+		$method = 'login_' . $method;
+		if (!function_exists($method))
+		{
+			$this->add('error')->add('NO_AUTH');
+			return;
+		}
+
+		$result = $method($username, $password);
+
+		// If the auth module wants us to create an empty profile do so and then treat the status as LOGIN_SUCCESS
+		if ($login['status'] == LOGIN_SUCCESS_CREATE_PROFILE)
+		{
+			// we are going to use the user_add function so include functions_user.php if it wasn't defined yet
+			if (!function_exists('user_add'))
+			{
+				include($phpbb_root_path . 'includes/functions_user.' . $phpEx);
+			}
+
+			user_add($login['user_row'], (isset($login['cp_data'])) ? $login['cp_data'] : false);
+
+			$sql = 'SELECT user_id, username, user_password, user_passchg, user_email, user_type
+				FROM ' . USERS_TABLE . "
+				WHERE username_clean = '" . $db->sql_escape(utf8_clean_string($username)) . "'";
+			$result = $db->sql_query($sql);
+			$row = $db->sql_fetchrow($result);
+			$db->sql_freeresult($result);
+
+			if (!$row)
+			{
+				$this->add('error')->add('Failed to create profile');
+				return;
+			}
+
+			$result = array(
+				'status'    => LOGIN_SUCCESS,
+				'error_msg' => false,
+				'user_row'  => $row,
+			);
+		}
+
+		// The result parameter is always an array, holding the relevant information...
+		if ($result['status'] == LOGIN_SUCCESS)
+		{
+			// get avatar url
+			$sql = 'SELECT user_avatar, user_avatar_type, user_avatar_width, user_avatar_height
+				FROM ' . USERS_TABLE . '
+				WHERE user_id = ' . $result['user_row']['user_id'];
+			$sql_result = $db->sql_query($sql);
+			$row = $db->sql_fetchrow($sql_result);
+			$db->sql_freeresult($sql_result);
+
+			$result['user_row']['user_avatar']        = $row['user_avatar'];
+			$result['user_row']['user_avatar_type']   = $row['user_avatar_type'];
+			$result['user_row']['user_avatar_width']  = $row['user_avatar_width'];
+			$result['user_row']['user_avatar_height'] = $row['user_avatar_height'];
+
+			$this->add('success')->add($this->user_row_line($result['user_row']));
+			return;
+		}
+		else
+		{
+			// Failures
+			switch ($result['status'])
+			{
+				case LOGIN_BREAK:
+					$this->add('error')->add($result['error_msg']);
+					return;
+				break;
+
+				case LOGIN_ERROR_ATTEMPTS:
+					// should we really error here?
+					// but if the external system does not protect from brute force
+					// not throwing an error here is potentially dangerous
+					$this->add('error')->add($result['error_msg']);
+					return;
+				break;
+
+				case LOGIN_ERROR_PASSWORD_CONVERT:
+					// can only tell the person to go back to the forum to get a new password
+					// unlikely to happen anyway.
+					$this->add('error')->add($result['error_msg']);
+					return;
+				break;
+
+				// Username, password, etc...
+				default:
+					$this->add('error')->add($result['error_msg']);
+					return;
+				break;
+			}
+		}
+
+		$this->add('error')->add('Unexpected result');
+	}
+
+	public function searchUsers()
+	{
+		global $db;
+
+		$start = request_var('start', 0);
+		$max = request_var('max', 0);
+		$return_type = request_var('returnType', ''); // NAME or ENTITY
+		$restriction = html_entity_decode(request_var('restriction', '', true), ENT_COMPAT, 'UTF-8');
+
+		$searchRestriction = new SearchRestriction($this,
+			$restriction,
+			array(
+				'email' => 'user_email',
+				'lastName' => 'username',
+				'firstName' => '', // always empty
+				'displayName' => 'username',
+				'name' => 'username',
+				'active' => 'user_type'
+			));
+
+		$sql = 'SELECT user_id, username, user_type, user_email, user_avatar, user_avatar_type, user_avatar_width, user_avatar_width
 			FROM ' . USERS_TABLE . '
-			WHERE user_id = ' . $result['user_row']['user_id'];
-		$sql_result = $db->sql_query($sql);
-		$row = $db->sql_fetchrow($sql_result);
-		$db->sql_freeresult($sql_result);
+			WHERE user_type IN (' . USER_NORMAL . ', ' . USER_FOUNDER . ')';
+		$sql .= $this->users_query('AND');
+		$sql .= $searchRestriction->getWhere();
+		$result = $db->sql_query_limit($sql, $max, $start);
 
-		$result['user_row']['user_avatar']        = $row['user_avatar'];
-		$result['user_row']['user_avatar_type']   = $row['user_avatar_type'];
-		$result['user_row']['user_avatar_width']  = $row['user_avatar_width'];
-		$result['user_row']['user_avatar_height'] = $row['user_avatar_height'];
+		while ($row = $db->sql_fetchrow($result))
+		{
+			$line = ($return_type == 'ENTITY') ? $this->user_row_line($row) : $this->get_user_name($row['username']);
 
-		$output = "success\n";
-		$output .= user_row_line($result['user_row']) . "\n";
-
-		return $output;
+			if ($line !== false)
+			{
+				$this->add($line);
+			}
+		}
+		$db->sql_freeresult($result);
 	}
-	else
+
+	public function groupMembers()
 	{
-		// Failures
-		switch ($result['status'])
+		global $db;
+
+		$start = request_var('start', 0);
+		$max = request_var('max', 0);
+		$return_type = request_var('returnType', ''); // NAME or ENTITY
+		$restriction = html_entity_decode(request_var('restriction', '', true), ENT_COMPAT, 'UTF-8');
+
+		$searchRestriction = new SearchRestriction($this,
+			$restriction,
+			array(
+				'name' => 'g.group_name',
+		));
+
+		$sql = 'SELECT u.user_id, u.username, u.user_type, u.user_email, u.user_avatar, u.user_avatar_type, u.user_avatar_width, u.user_avatar_width
+			FROM ' . GROUPS_TABLE . ' g, ' . USER_GROUP_TABLE . ' ug, ' . USERS_TABLE . ' u
+			WHERE g.group_id = ug.group_id
+				AND ug.user_id = u.user_id
+				AND ug.user_pending = 0
+				AND u.user_type IN (' . USER_NORMAL . ', ' . USER_FOUNDER . ')';
+		$sql .= $this->users_query('AND', 'u');
+		$sql .= $this->groups_query('AND', 'g');
+		$sql .= $searchRestriction->getWhere();
+		$result = $db->sql_query_limit($sql, $max, $start);
+
+		while ($row = $db->sql_fetchrow($result))
 		{
-			case LOGIN_BREAK:
-				return "error\n" . $result['error_msg'];
-			break;
+			$line = ($return_type == 'ENTITY') ? $this->user_row_line($row) : $this->get_user_name($row['username']);
 
-			case LOGIN_ERROR_ATTEMPTS:
-
-				// should we really error here?
-				// but if the external system does not protect from brute force
-				// not throwing an error here is potentially dangerous
-				return "error\n" . $result['error_msg'];
-			break;
-
-			case LOGIN_ERROR_PASSWORD_CONVERT:
-				// can only tell the person to go back to the forum to get a new password
-				// unlikely to happen anyway.
-				return "error\n" . $result['error_msg'];
-			break;
-
-			// Username, password, etc...
-			default:
-				return "error\n" . $result['error_msg'];
-			break;
+			if ($line !== false)
+			{
+				$this->add($line);
+			}
 		}
+		$db->sql_freeresult($result);
 	}
 
-	return "error\nUnexpected result";
-}
-
-function phpbb_external_auth_api_searchUsers()
-{
-	global $db;
-
-	$start = request_var('start', 0);
-	$max = request_var('max', 0);
-	$return_type = request_var('returnType', 0); // NAME or ENTITY
-	$restriction = html_entity_decode(request_var('restriction', '', true), ENT_COMPAT, 'UTF-8');
-
-	$searchRestriction = new SearchRestriction(
-		$restriction,
-		array(
-			'email' => 'user_email',
-			'lastName' => 'username',
-			'firstName' => '', // always empty
-			'displayName' => 'username',
-			'name' => 'username',
-			'active' => 'user_type'
-	));
-
-	$sql = 'SELECT user_id, username, user_type, user_email, user_avatar, user_avatar_type, user_avatar_width, user_avatar_width
-		FROM ' . USERS_TABLE . '
-		WHERE user_type <> ' . USER_IGNORE;
-	$sql .= $searchRestriction->getWhere();
-	$result = $db->sql_query_limit($sql, $max, $start);
-
-	$output = '';
-	while ($row = $db->sql_fetchrow($result))
+	public function searchGroups()
 	{
-		/*if ($return_type == 'ENTITY') - apparently NAME is not used*/
-		$output .= user_row_line($row) . "\n";
+		global $db;
+
+		$start = request_var('start', 0);
+		$max = request_var('max', 0);
+		$return_type = request_var('returnType', ''); // NAME or ENTITY
+		$restriction = html_entity_decode(request_var('restriction', '', true), ENT_COMPAT, 'UTF-8');
+
+		$searchRestriction = new SearchRestriction($this,
+			$restriction,
+			array(
+				'description' => 'group_desc',
+				'name' => 'group_name',
+				'active' => "'true'", // all phpBB groups are active, true = true (all), true = false (none)
+		));
+
+		$sql = 'SELECT group_id, group_name, group_desc, group_type
+			FROM ' . GROUPS_TABLE . '
+			WHERE 1=1';
+		$sql .= $this->groups_query('AND');
+		$sql .= $searchRestriction->getWhere();
+
+		$result = $db->sql_query_limit($sql, $max, $start);
+
+		while ($row = $db->sql_fetchrow($result))
+		{
+			$line = ($return_type == 'ENTITY') ? $this->group_row_line($row) : $this->get_group_name($row['group_name']);
+
+			if ($line !== false)
+			{
+				$this->add($line);
+			}
+		}
+		$db->sql_freeresult($result);
 	}
 
-	$db->sql_freeresult($result);
-
-	return $output;
-}
-
-function phpbb_external_auth_api_groupMembers()
-{
-	global $db;
-
-	$start = request_var('start', 0);
-	$max = request_var('max', 0);
-	$return_type = request_var('returnType', 0); // NAME or ENTITY
-	$restriction = html_entity_decode(request_var('restriction', '', true), ENT_COMPAT, 'UTF-8');
-
-	$searchRestriction = new SearchRestriction(
-		$restriction,
-		array(
-			'name' => 'g.group_name',
-	));
-
-	$sql = 'SELECT u.user_id, u.username, u.user_type, u.user_email, u.user_avatar, u.user_avatar_type, u.user_avatar_width, u.user_avatar_width
-		FROM ' . GROUPS_TABLE . ' g, ' . USER_GROUP_TABLE . ' ug, ' . USERS_TABLE . ' u
-		WHERE g.group_id = ug.group_id AND ug.user_id = u.user_id AND u.user_type <> ' . USER_IGNORE;
-	$sql .= $searchRestriction->getWhere();
-	$result = $db->sql_query_limit($sql, $max, $start);
-
-	$output = '';
-	while ($row = $db->sql_fetchrow($result))
+	public function UserMemberships()
 	{
-		if ($return_type == 'ENTITY')
+		global $db;
+
+		$start = request_var('start', 0);
+		$max = request_var('max', 0);
+		$return_type = request_var('returnType', ''); // NAME or ENTITY
+		$restriction = html_entity_decode(request_var('restriction', '', true), ENT_COMPAT, 'UTF-8');
+
+		$searchRestriction = new SearchRestriction($this,
+			$restriction,
+			array(
+				'name' => 'u.username',
+				'groupname' => 'g.group_name',
+		));
+
+		$sql = 'SELECT g.group_id, g.group_name, g.group_desc, g.group_type
+			FROM ' . USERS_TABLE . ' u, ' . USER_GROUP_TABLE . ' ug, ' . GROUPS_TABLE . ' g
+			WHERE u.user_id = ug.user_id
+				AND ug.group_id = g.group_id
+				AND ug.user_pending = 0
+				AND u.user_type IN (' . USER_NORMAL . ', ' . USER_FOUNDER . ')';
+		$sql .= $this->users_query('AND', 'u');
+		$sql .= $this->groups_query('AND', 'g');
+		$sql .= $searchRestriction->getWhere();
+
+		$result = $db->sql_query_limit($sql, $max, $start);
+
+		while ($row = $db->sql_fetchrow($result))
 		{
-			$output .= user_row_line($row) . "\n";
+			$line = ($return_type == 'ENTITY') ? $this->group_row_line($row) : $this->get_group_name($row['group_name']);
+
+			if ($line !== false)
+			{
+				$this->add($line);
+			}
 		}
-		else
-		{
-			$output .= $row['username'] . "\n";
-		}
+		$db->sql_freeresult($result);
 	}
 
-	$db->sql_freeresult($result);
-
-	return $output;
-}
-
-function phpbb_external_auth_api_searchGroups()
-{
-	global $db;
-
-	$start = request_var('start', 0);
-	$max = request_var('max', 0);
-	$return_type = request_var('returnType', 0); // NAME or ENTITY
-	$restriction = html_entity_decode(request_var('restriction', '', true), ENT_COMPAT, 'UTF-8');
-
-	$searchRestriction = new SearchRestriction(
-		$restriction,
-		array(
-			'description' => 'group_desc',
-			'name' => 'group_name',
-			'active' => '\'true\'', // all phpBB groups are active, true = true (all), true = false (none)
-	));
-
-	$sql = 'SELECT group_id, group_name, group_desc, group_type
-		FROM ' . GROUPS_TABLE . '
-		WHERE 1=1 ';
-	$sql .= $searchRestriction->getWhere();
-
-	$result = $db->sql_query_limit($sql, $max, $start);
-
-	$output = '';
-	while ($row = $db->sql_fetchrow($result))
+	protected function user_row_line($row)
 	{
-		if ($return_type == 'ENTITY')
+		global $config, $phpEx, $phpbb_root_path;
+
+/*
+		$row['user_avatar'] = html_entity_decode($row['user_avatar'], ENT_COMPAT, 'UTF-8');
+
+		$avatar_url = '';
+		if (!empty($row['user_avatar']) && $row['user_avatar_type'] && $config['allow_avatar'])
 		{
-			$output .= group_row_line($row) . "\n";
+			switch ($row['user_avatar_type'])
+			{
+				case AVATAR_UPLOAD:
+					if ($config['allow_avatar_upload'])
+					{
+						$avatar_url = $phpbb_root_path . "download/file.$phpEx?avatar=" . $row['user_avatar'];
+					}
+				break;
+
+				case AVATAR_GALLERY:
+					if ($config['allow_avatar_local'])
+					{
+						$avatar_url = $phpbb_root_path . $config['avatar_gallery_path'] . '/' . $row['user_avatar'];
+					}
+				break;
+
+				case AVATAR_REMOTE:
+					if ($config['allow_avatar_remote'])
+					{
+						$avatar_url = $row['user_avatar'];
+					}
+				break;
+			}
+
+			$avatar_url = str_replace(' ', '%20', $avatar_url);
 		}
-		else
+	*/
+
+		$avatar_url = '';
+		$username = $this->get_user_name($row['username']);
+
+		if ($username === false)
 		{
-			$output .= _api_get_group_name($row['group_name']) . "\n";
+			return false;
 		}
+
+		return $row['user_id'] . "\t" . $username . "\t" . html_entity_decode($row['user_email'], ENT_COMPAT, 'UTF-8') . "\t" . $row['user_type'] . "\t" . $avatar_url;
 	}
 
-	$db->sql_freeresult($result);
-
-	return $output;
-}
-
-function phpbb_external_auth_api_UserMemberships()
-{
-	global $db;
-
-	$start = request_var('start', 0);
-	$max = request_var('max', 0);
-	$return_type = request_var('returnType', 0); // NAME or ENTITY
-	$restriction = html_entity_decode(request_var('restriction', '', true), ENT_COMPAT, 'UTF-8');
-
-	$searchRestriction = new SearchRestriction(
-		$restriction,
-		array(
-			'name' => 'u.username',
-			'groupname' => 'g.group_name',
-	));
-
-	$sql = 'SELECT g.group_id, g.group_name, g.group_desc, g.group_type
-		FROM ' . USERS_TABLE . ' u, ' . USER_GROUP_TABLE . ' ug, ' . GROUPS_TABLE . ' g
-		WHERE u.user_id = ug.user_id AND ug.group_id = g.group_id';
-	$sql .= $searchRestriction->getWhere();
-
-	$result = $db->sql_query_limit($sql, $max, $start);
-
-	$output = '';
-	while ($row = $db->sql_fetchrow($result))
+	protected function group_row_line($row)
 	{
-		if ($return_type == 'ENTITY')
+		// Return correct group name
+		$group_name = $this->get_group_name($row['group_name']);
+
+		if ($group_name === false)
 		{
-			$output .= group_row_line($row) . "\n";
+			return false;
 		}
-		else
-		{
-			$output .= _api_get_group_name($row['group_name']) . "\n";
-		}
+
+		return $row['group_id'] . "\t" . html_entity_decode($group_name, ENT_COMPAT, 'UTF-8') . "\t" . $row['group_type'] . "\t" . html_entity_decode(str_replace("\n", ' ', $row['group_desc']), ENT_COMPAT, 'UTF-8');
 	}
 
-	$db->sql_freeresult($result);
+	/**
+	* Get correct group name. Prefixed with _api_ to not conflict with phpBB funciton get_group_name()
+	*/
+	public function get_group_name($group_name, $reverse = false)
+	{
+		if ($reverse)
+		{
+			return (isset($this->special_groups_reverse[$group_name])) ? $this->special_groups_reverse[$group_name] : $group_name;
+		}
 
-	return $output;
+		return (isset($this->special_groups[$group_name])) ? $this->special_groups[$group_name] : $group_name;
+	}
 }
 
 class SearchRestriction
 {
 	private $obj;
 	private $columns;
+	private $api;
 
-	public function __construct($restrictionJson, $columnMap)
+	public function __construct($api, $restrictionJson, $columnMap)
 	{
+		$this->api = $api;
 		$this->obj = json_decode($restrictionJson, true);
 
 		$this->columns = $columnMap;
@@ -448,7 +751,7 @@ class SearchRestriction
 		if ($plain_column == 'group_name')
 		{
 			// Define true as second parameter to reverse the mapping (English name to name stored in database)
-			$value = _api_get_group_name($value, true);
+			$value = $this->api->get_group_name($value, true);
 		}
 
 		switch ($compareMode)
@@ -487,92 +790,4 @@ class SearchRestriction
 
 		return $where;
 	}
-}
-
-/**
- * @todo use base URL for avatars?
- */
-function user_row_line($row)
-{
-	global $config, $phpEx, $phpbb_root_path;
-
-	$output = '';
-
-	$row['user_avatar'] = html_entity_decode($row['user_avatar'], ENT_COMPAT, 'UTF-8');
-
-	$avatar_url = '';
-	if (!empty($row['user_avatar']) && $row['user_avatar_type'] && $config['allow_avatar'])
-	{
-		switch ($row['user_avatar_type'])
-		{
-			case AVATAR_UPLOAD:
-				if ($config['allow_avatar_upload'])
-				{
-					$avatar_url = $phpbb_root_path . "download/file.$phpEx?avatar=" . $row['user_avatar'];
-				}
-			break;
-
-			case AVATAR_GALLERY:
-				if ($config['allow_avatar_local'])
-				{
-					$avatar_url = $phpbb_root_path . $config['avatar_gallery_path'] . '/' . $row['user_avatar'];
-				}
-			break;
-
-			case AVATAR_REMOTE:
-				if ($config['allow_avatar_remote'])
-				{
-					$avatar_url = $row['user_avatar'];
-				}
-			break;
-		}
-
-		$avatar_url = str_replace(' ', '%20', $avatar_url);
-	}
-
-	$output .= $row['user_id'] . "\t";
-	$output .= html_entity_decode($row['username'], ENT_COMPAT, 'UTF-8') . "\t";
-	$output .= html_entity_decode($row['user_email'], ENT_COMPAT, 'UTF-8') . "\t";
-	$output .= $row['user_type'] . "\t";
-	$output .= $avatar_url . "\n";
-
-	return $output;
-}
-
-function group_row_line($row)
-{
-	// Return correct group name
-	$row['group_name'] = _api_get_group_name($row['group_name']);
-
-	$output  = $row['group_id'] . "\t";
-	$output .= html_entity_decode($row['group_name'], ENT_COMPAT, 'UTF-8') . "\t";
-	$output .= $row['group_type'] . "\t";
-	$output .= html_entity_decode($row['group_desc'], ENT_COMPAT, 'UTF-8') . "\n";
-
-	return $output;
-}
-
-/**
- * Get correct group name. Prefixed with _api_ to not conflict with phpBB funciton get_group_name()
- */
-function _api_get_group_name($group_name, $reverse = false)
-{
-	// Special group name mapping
-	$special_groups = array(
-		'ADMINISTRATORS'		=> 'Administrators',
-		'BOTS'					=> 'Bots',
-		'GUESTS'				=> 'Guests',
-		'REGISTERED'			=> 'Registered users',
-		'REGISTERED_COPPA'		=> 'Registered COPPA users',
-		'GLOBAL_MODERATORS'		=> 'Global moderators',
-		'NEWLY_REGISTERED'		=> 'Newly registered users',
-	);
-
-	// Resolve english names to database names?
-	if ($reverse === true)
-	{
-		$special_groups = array_flip($special_groups);
-	}
-
-	return (isset($special_groups[$group_name])) ? $special_groups[$group_name] : $group_name;
 }
