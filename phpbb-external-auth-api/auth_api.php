@@ -649,7 +649,7 @@ class phpbb_auth_api
 					break;
 				}
 
-				$icon_location = str_replace(' ', '%20', $avatar_url);
+				$icon_location = str_replace(' ', '%20', $icon_location);
 			}
 		}
 

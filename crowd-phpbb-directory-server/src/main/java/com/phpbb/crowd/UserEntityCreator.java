@@ -33,37 +33,24 @@ public class UserEntityCreator extends EntityCreator
         return 4;
     }
 
-	// properties: username, email, user_type, avatar, firstname, lastname
+	// properties: user_id, username, email, user_type, avatar, firstname, lastname
     public Object hydrateObject(String[] values)
     {
         UserTemplate user = new UserTemplate(values[1], getDirectoryId());
 
-		if (values[5] != null)
+		if (values.length > 6 && values[5] != null && values[6] != null)
 		{
 			user.setFirstName(values[5]);
-		}
-		else
-		{
-			user.setFirstName("");
-		}
-
-		if (values[6] != null)
-		{
 	        user.setLastName(values[6]);
-		}
-		else
-		{
-	        user.setLastName(values[1]);
-		}
-
-		if (values[5] != null && values[6] != null)
-		{
 			user.setDisplayName(values[5] + " " + values[6]);
 		}
 		else
 		{
+			user.setFirstName("");
+	        user.setLastName(values[1]);
 			user.setDisplayName(values[1]);
 		}
+
         user.setName(values[1]);
         user.setEmailAddress(values[2]);
 
@@ -77,7 +64,7 @@ public class UserEntityCreator extends EntityCreator
         }
 
         // avatar might not be set
-        if (values[4])
+        if (values.length > 4 && values[4] != null)
         {
             user.setIconLocation(values[4]);
         }
