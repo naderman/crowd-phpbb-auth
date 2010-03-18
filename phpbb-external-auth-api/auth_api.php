@@ -11,39 +11,21 @@
 * @ignore
 */
 
-// Base avatar URL
-define('AVATAR_BASE_URL', '');
+require './config.php';
 
-// Debug calls? Writes to log file, set to false to disable
-define('DEBUG_API', false);
-
-// Do not write to log file if output has more than 50 entries
-define('DEBUG_API_LIMIT_OUTPUT', 50);
-
-// Allowed IP's
-$allowed_ips = array(
-	'127.0.0.1' => true,
-);
-
-// Groups we want to not have in our directory
-// This is extremely useful, because this ensures a clean directory - Atlassian Tools try to index and check every single group, regardless of it's status/connection
-$exclude_groups = array(
-	228654, // Bots
-	228649, // Guests
-	228735, // Newly Registered Users
-	228651, // COPPA
-	228725, // on moderation queue
-	228695, // without edit
-	84421, // Former Team Members
-);
+if (empty($api_config))
+{
+	exit;
+}
 
 // make sure this is only accessible from our own servers
-if (empty($_SERVER['REMOTE_ADDR']) || !isset($allowed_ips[$_SERVER['REMOTE_ADDR']]))
+if (empty($_SERVER['REMOTE_ADDR']) || !isset($api_config['allowed_ips'][$_SERVER['REMOTE_ADDR']]))
 {
 	exit;
 }
 
 define('IN_PHPBB', true);
+$root_path = './';
 $phpbb_root_path = (defined('PHPBB_ROOT_PATH')) ? PHPBB_ROOT_PATH : './../community/';
 $phpEx = substr(strrchr(__FILE__, '.'), 1);
 
@@ -54,19 +36,33 @@ if (!defined('E_DEPRECATED'))
 }
 error_reporting(E_ALL ^ E_NOTICE ^ E_DEPRECATED);
 
-require($phpbb_root_path . 'config.' . $phpEx);
-
-if (!defined('PHPBB_INSTALLED') || empty($dbms) || empty($acm_type))
-{
-	exit;
-}
-
 if (version_compare(PHP_VERSION, '6.0.0-dev', '<'))
 {
 	@set_magic_quotes_runtime(0);
 }
 
 define('STRIP', (get_magic_quotes_gpc()) ? true : false);
+
+// Before we actually initialise all files, maybe we could simply return the important part quickly?
+if ($api_config['api_cache_users'] && !empty($_POST['action']) && $_POST['action'] == 'searchUsers')
+{
+	$result = _api_get_cached_user($root_path . 'user_cache/', $api_config['api_cache_users']);
+
+	if ($result !== false)
+	{
+		echo $result;
+		garbage_collection();
+		exit_handler();
+		exit;
+	}
+}
+
+require($phpbb_root_path . 'config.' . $phpEx);
+
+if (!defined('PHPBB_INSTALLED') || empty($dbms) || empty($acm_type))
+{
+	exit;
+}
 
 // Include files
 require($phpbb_root_path . 'includes/acm/acm_' . $acm_type . '.' . $phpEx);
@@ -90,10 +86,7 @@ unset($dbpasswd);
 $config = $cache->obtain_config();
 
 // Initialize auth API
-$api = new phpbb_auth_api(AVATAR_BASE_URL, DEBUG_API, DEBUG_API_LIMIT_OUTPUT);
-
-// Tell the API to exclude groups
-$api->exclude_groups($exclude_groups);
+$api = new phpbb_auth_api($api_config);
 
 $action = basename(request_var('action', ''));
 
@@ -119,11 +112,8 @@ exit;
 */
 class phpbb_auth_api
 {
-	protected $avatar_base_url = false;
 	protected $debug_file = false;
-	protected $debug_limit = false;
 
-	protected $exclude_group_ids = array();
 	protected $fp = false;
 	protected $output = array();
 
@@ -133,11 +123,12 @@ class phpbb_auth_api
 	protected $special_groups = array();
 	protected $special_groups_reverse = array();
 
-	public function __construct($avatar_base_url, $debug_file, $debug_limit)
+	protected $config = array();
+
+	public function __construct($config)
 	{
-		$this->avatar_base_url = $avatar_base_url;
-		$this->debug_file = $debug_file;
-		$this->debug_limit = $debug_limit;
+		$this->config = $config;
+		$this->debug_file = $config['debug_api'];
 
 		// Special group name mapping
 		$this->special_groups = array(
@@ -156,7 +147,6 @@ class phpbb_auth_api
 	public function implemented()
 	{
 		return array(
-			'findUsersByName',
 			'authenticate',
 			'searchUsers',
 			'searchGroups',
@@ -205,7 +195,7 @@ class phpbb_auth_api
 		fwrite($this->fp, '[' . date('Y-m-d H:i:s') . '] [' . $action . '] ');
 		if (is_array($data))
 		{
-			if ($this->debug_limit && sizeof($data) > $this->debug_limit)
+			if ($this->config['debug_api_limit_output'] && sizeof($data) > $this->config['debug_api_limit_output'])
 			{
 				fwrite($this->fp, 'Dataset: ' . sizeof($data) . ' Elements.');
 				$data = array();
@@ -235,21 +225,16 @@ class phpbb_auth_api
 		return $this;
 	}
 
-	public function exclude_groups($group_ids)
-	{
-		$this->exclude_group_ids = $group_ids;
-	}
-
 	protected function groups_query($sql_prefix = '', $sql_alias = '')
 	{
-		if (empty($this->exclude_group_ids))
+		if (empty($this->config['exclude_groups']))
 		{
 			return '';
 		}
 
 		$sql = ($sql_prefix) ? ' ' . $sql_prefix . ' ' : '';
 		$sql .= ($sql_alias) ? $sql_alias . '.' : '';
-		$sql .= 'group_id NOT IN (' . implode(', ', $this->exclude_group_ids) . ')';
+		$sql .= 'group_id NOT IN (' . implode(', ', array_map('intval', $this->config['exclude_groups'])) . ')';
 
 		return $sql;
 	}
@@ -263,20 +248,29 @@ class phpbb_auth_api
 			// Get banned user ids
 			$banned_user_ids = array();
 
-			$sql = 'SELECT ban_userid FROM ' . BANLIST_TABLE . '
-				WHERE ban_userid <> 0
-					AND ban_exclude = 0';
-			$result = $db->sql_query($sql);
-			while ($row = $db->sql_fetchrow($result))
+			if ($this->config['exclude_banned_users'])
 			{
-				$banned_user_ids[] = (int) $row['ban_userid'];
+				$sql = 'SELECT ban_userid FROM ' . BANLIST_TABLE . '
+					WHERE ban_userid <> 0
+						AND ban_exclude = 0';
+				$result = $db->sql_query($sql);
+				while ($row = $db->sql_fetchrow($result))
+				{
+					$banned_user_ids[] = (int) $row['ban_userid'];
+				}
+				$db->sql_freeresult($result);
 			}
-			$db->sql_freeresult($result);
 
-			// Check for last login date. ;) At least within the last 2 years.
+			// Check for last login date. ;)
 			// Use the same timestamp for a day, to let the query be cached later maybe. :)
-			$years = 2;
-			$last_logged_in = strtotime(date('Y-m-d')) - ($years * 365 * 24 * 60 * 60);
+			if ($this->config['last_login_period'])
+			{
+				$last_logged_in = strtotime(date('Y-m-d')) - (int) ($this->config['last_login_period'] * 24 * 60 * 60);
+			}
+			else
+			{
+				$last_logged_in = 0;
+			}
 
 			$this->user_query_sql = array();
 
@@ -285,7 +279,10 @@ class phpbb_auth_api
 				$this->user_query_sql[] = array('key' => 'user_id', 'query' => 'NOT IN (' . implode(', ', $banned_user_ids) . ')');
 			}
 
-			$this->user_query_sql[] = array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in);
+			if ($last_logged_in)
+			{
+				$this->user_query_sql[] = array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in);
+			}
 		}
 
 		// Return correct query
@@ -441,19 +438,32 @@ class phpbb_auth_api
 
 		$searchRestriction = new SearchRestriction($this,
 			$restriction,
+			// Is it safe to assume our directory will only search for name? ;)
 			array(
-				'email' => 'user_email',
-				'lastName' => 'username',
-				'firstName' => '', // always empty
-				'displayName' => 'username',
-				'name' => 'username',
-				'active' => 'user_type'
+				'email' => 'u.user_email',
+/*				'lastName' => 'firstname',
+				'firstName' => 'lastname', // always empty
+				'displayName' => "CONCAT(firstname, ' ', lastname)",*/
+				'name' => 'u.username',
+				'active' => 'u.user_type'
 			));
 
-		$sql = 'SELECT user_id, username, user_type, user_email, user_avatar, user_avatar_type, user_avatar_width, user_avatar_width
-			FROM ' . USERS_TABLE . '
-			WHERE user_type IN (' . USER_NORMAL . ', ' . USER_FOUNDER . ')';
-		$sql .= $this->users_query('AND');
+		$sql = 'SELECT u.user_id, u.username, u.user_type, u.user_email, u.user_avatar, u.user_avatar_type, u.user_avatar_width, u.user_avatar_width';
+
+		if ($this->config['firstname_column'] && $this->config['lastname_column'])
+		{
+			$sql .= ', pf.pf_' . $this->config['firstname_column'] . ' as firstname, pf.pf_' . $this->config['lastname_column'] . ' as lastname';
+		}
+
+		$sql .= ' FROM ' . USERS_TABLE . ' u';
+
+		if ($this->config['firstname_column'] && $this->config['lastname_column'])
+		{
+			$sql .= ' LEFT JOIN ' . PROFILE_FIELDS_DATA_TABLE . ' pf ON (u.user_id = pf.user_id)';
+		}
+
+		$sql .= ' WHERE u.user_type IN (' . USER_NORMAL . ', ' . USER_FOUNDER . ')';
+		$sql .= $this->users_query('AND', 'u');
 		$sql .= $searchRestriction->getWhere();
 		$result = $db->sql_query_limit($sql, $max, $start);
 
@@ -467,6 +477,12 @@ class phpbb_auth_api
 			}
 		}
 		$db->sql_freeresult($result);
+
+		if ($this->config['api_cache_users'] && $max == 1 && $start == 0 && $return_type == 'ENTITY')
+		{
+			global $root_path;
+			_api_set_cached_user($root_path . 'user_cache/', $restriction);
+		}
 	}
 
 	public function groupMembers()
@@ -484,9 +500,21 @@ class phpbb_auth_api
 				'name' => 'g.group_name',
 		));
 
-		$sql = 'SELECT u.user_id, u.username, u.user_type, u.user_email, u.user_avatar, u.user_avatar_type, u.user_avatar_width, u.user_avatar_width
-			FROM ' . GROUPS_TABLE . ' g, ' . USER_GROUP_TABLE . ' ug, ' . USERS_TABLE . ' u
-			WHERE g.group_id = ug.group_id
+		$sql = 'SELECT u.user_id, u.username, u.user_type, u.user_email, u.user_avatar, u.user_avatar_type, u.user_avatar_width, u.user_avatar_width';
+
+		if ($this->config['firstname_column'] && $this->config['lastname_column'])
+		{
+			$sql .= ', pf.pf_' . $this->config['firstname_column'] . ' as firstname, pf.pf_' . $this->config['lastname_column'] . ' as lastname';
+		}
+
+		$sql .= ' FROM (' . GROUPS_TABLE . ' g, ' . USER_GROUP_TABLE . ' ug, ' . USERS_TABLE . ' u)';
+
+		if ($this->config['firstname_column'] && $this->config['lastname_column'])
+		{
+			$sql .= ' LEFT JOIN ' . PROFILE_FIELDS_DATA_TABLE . ' pf ON (u.user_id = pf.user_id)';
+		}
+
+		$sql .= ' WHERE g.group_id = ug.group_id
 				AND ug.user_id = u.user_id
 				AND ug.user_pending = 0
 				AND u.user_type IN (' . USER_NORMAL . ', ' . USER_FOUNDER . ')';
@@ -584,45 +612,47 @@ class phpbb_auth_api
 		$db->sql_freeresult($result);
 	}
 
+	// username, user_email, user_active, avatar, first_name, last_name
 	protected function user_row_line($row)
 	{
 		global $config, $phpEx, $phpbb_root_path;
 
-/*
-		$row['user_avatar'] = html_entity_decode($row['user_avatar'], ENT_COMPAT, 'UTF-8');
+		$icon_location = '';
 
-		$avatar_url = '';
-		if (!empty($row['user_avatar']) && $row['user_avatar_type'] && $config['allow_avatar'])
+		if ($this->config['avatar_base_url'])
 		{
-			switch ($row['user_avatar_type'])
+			$row['user_avatar'] = html_entity_decode($row['user_avatar'], ENT_COMPAT, 'UTF-8');
+
+			if (!empty($row['user_avatar']) && $row['user_avatar_type'] && $config['allow_avatar'])
 			{
-				case AVATAR_UPLOAD:
-					if ($config['allow_avatar_upload'])
-					{
-						$avatar_url = $phpbb_root_path . "download/file.$phpEx?avatar=" . $row['user_avatar'];
-					}
-				break;
+				switch ($row['user_avatar_type'])
+				{
+					case AVATAR_UPLOAD:
+						if ($config['allow_avatar_upload'])
+						{
+							$icon_location = $this->config['avatar_base_url'] . "download/file.$phpEx?avatar=" . $row['user_avatar'];
+						}
+					break;
 
-				case AVATAR_GALLERY:
-					if ($config['allow_avatar_local'])
-					{
-						$avatar_url = $phpbb_root_path . $config['avatar_gallery_path'] . '/' . $row['user_avatar'];
-					}
-				break;
+					case AVATAR_GALLERY:
+						if ($config['allow_avatar_local'])
+						{
+							$icon_location = $this->config['avatar_base_url'] . $config['avatar_gallery_path'] . '/' . $row['user_avatar'];
+						}
+					break;
 
-				case AVATAR_REMOTE:
-					if ($config['allow_avatar_remote'])
-					{
-						$avatar_url = $row['user_avatar'];
-					}
-				break;
+					case AVATAR_REMOTE:
+						if ($config['allow_avatar_remote'])
+						{
+							$icon_location = $row['user_avatar'];
+						}
+					break;
+				}
+
+				$icon_location = str_replace(' ', '%20', $avatar_url);
 			}
-
-			$avatar_url = str_replace(' ', '%20', $avatar_url);
 		}
-	*/
 
-		$avatar_url = '';
 		$username = $this->get_user_name($row['username']);
 
 		if ($username === false)
@@ -630,7 +660,25 @@ class phpbb_auth_api
 			return false;
 		}
 
-		return $row['user_id'] . "\t" . $username . "\t" . html_entity_decode($row['user_email'], ENT_COMPAT, 'UTF-8') . "\t" . $row['user_type'] . "\t" . $avatar_url;
+		$user_entity_row = array(
+			'user_id'		=> $row['user_id'],
+			'username'		=> $username,
+			'user_email'	=> html_entity_decode($row['user_email'], ENT_COMPAT, 'UTF-8'),
+			'user_type'		=> $row['user_type'],
+			'icon_location'	=> $icon_location,
+		);
+
+		if (!empty($row['firstname']))
+		{
+			$user_entity_row['firstname'] = $row['firstname'];
+		}
+
+		if (!empty($row['lastname']))
+		{
+			$user_entity_row['lastname'] = $row['lastname'];
+		}
+
+		return implode("\t", $user_entity_row);
 	}
 
 	protected function group_row_line($row)
@@ -656,7 +704,8 @@ class phpbb_auth_api
 			return (isset($this->special_groups_reverse[$group_name])) ? $this->special_groups_reverse[$group_name] : $group_name;
 		}
 
-		return (isset($this->special_groups[$group_name])) ? $this->special_groups[$group_name] : $group_name;
+		$group_name = (isset($this->special_groups[$group_name])) ? $this->special_groups[$group_name] : $group_name;
+		return html_entity_decode($group_name, ENT_COMPAT, 'UTF-8');
 	}
 }
 
@@ -789,5 +838,64 @@ class SearchRestriction
 		}
 
 		return $where;
+	}
+}
+
+function _api_get_cached_user($cache_path, $api_cache_users)
+{
+	$max = (!empty($_POST['max'])) ? (int) $_POST['max'] : 0;
+	$start = (!empty($_POST['start'])) ? (int) $_POST['start'] : 0;
+	$returntype = (!empty($_POST['returnType'])) ? (string) $_POST['returnType'] : '';
+
+	// Check user name...
+	if ($max == 1 && $start == 0 && $returntype == 'ENTITY')
+	{
+		$restriction = (!empty($_POST['restriction'])) ? (string) $_POST['restriction'] : '';
+		$restriction = json_decode(html_entity_decode((STRIP) ? stripslashes($restriction) : $restriction, ENT_COMPAT, 'UTF-8'), true);
+
+		if ($restriction['mode'] == 'EXACTLY_MATCHES' && $restriction['property'] == 'name' && !empty($restriction['value']))
+		{
+			$md5 = md5($restriction['value']);
+			$first_char = $md5[0];
+			$second_char = $md5[1];
+
+			if (file_exists($cache_path . $first_char . '/' . $second_char . '/' . $md5))
+			{
+				$lastchange = @filemtime($cache_path . $first_char . '/' . $second_char . '/' . $md5);
+
+				if ($lastchange >= time() - $api_cache_users)
+				{
+					return file_get_contents($cache_path . $first_char . '/' . $second_char . '/' . $md5);
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+function _api_set_cached_user($cache_path, $restriction)
+{
+	$restriction = json_decode($restriction, true);
+
+	if ($restriction['mode'] == 'EXACTLY_MATCHES' && $restriction['property'] == 'name' && !empty($restriction['value']))
+	{
+		$md5 = md5($restriction['value']);
+		$first_char = $md5[0];
+		$second_char = $md5[1];
+
+		if (!file_exists($cache_path . $first_char))
+		{
+			mkdir($cache_path . $first_char);
+		}
+
+		if (!file_exists($cache_path . $first_char . '/' . $second_char))
+		{
+			mkdir($cache_path . $first_char . '/' . $second_char);
+		}
+
+		$fp = fopen($cache_path . $first_char . '/' . $second_char . '/' . $md5, 'w');
+		fwrite($fp, $line . "\n");
+		fclose($fp);
 	}
 }

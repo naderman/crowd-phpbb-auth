@@ -327,7 +327,7 @@ public class phpBBDirectoryServer implements RemoteDirectory
 
     public boolean isUserDirectGroupMember(String username, String groupName)
     {
-        log.info("crowd-phpbbauth-plugin: isUserDirectGroupMember" + username + ", " + groupName);
+        log.info("crowd-phpbbauth-plugin: isUserDirectGroupMember: " + username + ", " + groupName);
         EntityCreator creator;
         List list;
         EntityQuery entityQuery;
