@@ -85,6 +85,14 @@ unset($dbpasswd);
 
 $config = $cache->obtain_config();
 
+/* Try to get some custom "things"
+$_POST['max'] = $_REQUEST['max'] = 1;
+$_POST['restriction'] = $_REQUEST['restriction'] = "{\"mode\": \"EXACTLY_MATCHES\", \"property\": \"name\", \"value\": \"global moderators\"}";
+$_POST['start'] = $_REQUEST['start'] = 0;
+$_POST['action'] = $_REQUEST['action'] = 'searchGroups';
+$_POST['returnType'] = $_REQUEST['returnType'] = 'ENTITY';
+*/
+
 // Initialize auth API
 $api = new phpbb_auth_api($api_config);
 
@@ -141,7 +149,10 @@ class phpbb_auth_api
 			'NEWLY_REGISTERED'		=> 'Newly registered users',
 		);
 
+		$this->special_groups = array_change_key_case($this->special_groups, CASE_LOWER);
+
 		$this->special_groups_reverse = array_flip($this->special_groups);
+		$this->special_groups_reverse = array_change_key_case($this->special_groups_reverse, CASE_LOWER);
 	}
 
 	public function implemented()
@@ -557,7 +568,6 @@ class phpbb_auth_api
 			WHERE 1=1';
 		$sql .= $this->groups_query('AND');
 		$sql .= $searchRestriction->getWhere();
-
 		$result = $db->sql_query_limit($sql, $max, $start);
 
 		while ($row = $db->sql_fetchrow($result))
@@ -701,10 +711,10 @@ class phpbb_auth_api
 	{
 		if ($reverse)
 		{
-			return (isset($this->special_groups_reverse[$group_name])) ? $this->special_groups_reverse[$group_name] : $group_name;
+			return (isset($this->special_groups_reverse[strtolower($group_name)])) ? $this->special_groups_reverse[strtolower($group_name)] : $group_name;
 		}
 
-		$group_name = (isset($this->special_groups[$group_name])) ? $this->special_groups[$group_name] : $group_name;
+		$group_name = (isset($this->special_groups[strtolower($group_name)])) ? $this->special_groups[strtolower($group_name)] : $group_name;
 		return html_entity_decode($group_name, ENT_COMPAT, 'UTF-8');
 	}
 }
@@ -801,6 +811,8 @@ class SearchRestriction
 		{
 			// Define true as second parameter to reverse the mapping (English name to name stored in database)
 			$value = $this->api->get_group_name($value, true);
+			$where = 'LOWER(' . $column . ') ';
+			$value = strtolower($value);
 		}
 
 		switch ($compareMode)
