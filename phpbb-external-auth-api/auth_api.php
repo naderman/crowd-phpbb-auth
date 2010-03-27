@@ -2,7 +2,7 @@
 /**
 *
 * @package ExternalAuthAPI
-* @copyright (c) 2010 phpBB Group
+* @copyright 2010 phpBB Ltd.
 * @license http://opensource.org/licenses/gpl-license.php GNU Public License version 2 or 3 at your option
 *
 */
@@ -455,7 +455,7 @@ class phpbb_auth_api
 /*				'lastName' => 'firstname',
 				'firstName' => 'lastname', // always empty
 				'displayName' => "CONCAT(firstname, ' ', lastname)",*/
-				'name' => 'u.username',
+				'name' => 'u.username_clean',
 				'active' => 'u.user_type'
 			));
 
@@ -594,7 +594,7 @@ class phpbb_auth_api
 		$searchRestriction = new SearchRestriction($this,
 			$restriction,
 			array(
-				'name' => 'u.username',
+				'name' => 'u.username_clean',
 				'groupname' => 'g.group_name',
 		));
 
@@ -813,6 +813,12 @@ class SearchRestriction
 			$value = $this->api->get_group_name($value, true);
 			$where = 'LOWER(' . $column . ') ';
 			$value = strtolower($value);
+		}
+
+		// Make sure usernames are always "cleaned" up
+		if ($plain_column == 'username_clean')
+		{
+			$value = utf8_clean_string($value);
 		}
 
 		switch ($compareMode)
