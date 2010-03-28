@@ -801,6 +801,9 @@ class SearchRestriction
 			return '';
 		}
 
+		// Because we decoded the search restriction but phpBB always stores speciachar'd content we need to specialchar all values before we use them
+		$value = utf8_htmlspecialchars($value);
+
 		$where = $column . ' ';
 
 		// remove alias to get plain column name
