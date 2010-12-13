@@ -383,6 +383,21 @@ class phpbb_auth_api
 			);
 		}
 
+		if ($this->config['exclude_banned_users'] && isset($result['user_row']['user_id']))
+		{
+			$sql = 'SELECT ban_userid FROM ' . BANLIST_TABLE . '
+				WHERE ban_userid = ' . (int) $result['user_row']['user_id'];
+			$result = $db->sql_query($sql);
+			$row = $db->sql_fetchrow($result);
+			$db->sql_freeresult($result);
+
+			if ($row)
+			{
+				$this->add('error')->add('You are banned');
+				return;
+			}
+		}
+
 		// The result parameter is always an array, holding the relevant information...
 		if ($result['status'] == LOGIN_SUCCESS)
 		{
