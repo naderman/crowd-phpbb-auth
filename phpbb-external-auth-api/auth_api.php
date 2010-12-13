@@ -383,7 +383,7 @@ class phpbb_auth_api
 			);
 		}
 
-		if ($this->config['exclude_banned_users'] && isset($result['user_row']['user_id']))
+		if (isset($result['user_row']['user_id']))
 		{
 			$sql = 'SELECT ban_userid FROM ' . BANLIST_TABLE . '
 				WHERE ban_userid = ' . (int) $result['user_row']['user_id'];
