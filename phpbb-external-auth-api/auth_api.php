@@ -387,9 +387,9 @@ class phpbb_auth_api
 		{
 			$sql = 'SELECT ban_userid FROM ' . BANLIST_TABLE . '
 				WHERE ban_userid = ' . (int) $result['user_row']['user_id'];
-			$result = $db->sql_query($sql);
-			$row = $db->sql_fetchrow($result);
-			$db->sql_freeresult($result);
+			$ban_result = $db->sql_query($sql);
+			$row = $db->sql_fetchrow($ban_result);
+			$db->sql_freeresult($ban_result);
 
 			if ($row)
 			{
