@@ -26,6 +26,7 @@ import com.atlassian.crowd.search.query.membership.*;
 import com.atlassian.crowd.search.query.entity.*;
 import com.atlassian.crowd.search.query.entity.restriction.*;
 import com.atlassian.crowd.search.ReturnType;
+import com.atlassian.crowd.search.Entity;
 import com.atlassian.crowd.embedded.api.SearchRestriction;
 
 import java.rmi.RemoteException;
@@ -425,27 +426,23 @@ public class phpBBDirectoryServer implements RemoteDirectory
             query.getEntityNameToMatch()
         );
 
-        //if (query.getEntityToMatch().getEntityType() == Entity.GROUP)
-        if (query instanceof UserMembersOfGroupQuery)
+        if (query.getEntityToMatch().getEntityType() != Entity.GROUP)
         {
             action = "groupMembers";
             creator = new UserEntityCreator(getDirectoryId());
             list = new ArrayList<UserTemplate>();
             entityQuery = new UserQuery(User.class, searchRestriction, query.getStartIndex(), query.getMaxResults());
         }
-        else // assume Entity.USER
+        else // assume Entity.GROUP
         {
             action = "userMemberships";
             creator = new GroupEntityCreator(getDirectoryId());
             list = new ArrayList<GroupTemplate>();
             entityQuery = new GroupQuery(Group.class, GroupType.GROUP, searchRestriction, query.getStartIndex(), query.getMaxResults());
         }
-        /*
-        if (query.getReturnType() != ReturnType.ENTITY)
-        {
-            list = new ArrayList<String>();
-            entityQuery = new EntityQuery(entityQuery, query.getReturnType());
-        }*/
+
+        log.info("crowd-phpbbauth-plugin: entity to return: " + query.getEntityToReturn().toString());
+        log.info("crowd-phpbbauth-plugin: returnType: " + query.getReturnType().toString());
 
         searchEntities(action, creator, entityQuery, list);
 
