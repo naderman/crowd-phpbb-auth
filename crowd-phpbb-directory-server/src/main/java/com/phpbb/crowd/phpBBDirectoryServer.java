@@ -429,16 +429,23 @@ public class phpBBDirectoryServer implements RemoteDirectory
         if (query.getEntityToMatch().getEntityType() != Entity.GROUP)
         {
             action = "userMemberships";
-            creator = new UserEntityCreator(getDirectoryId());
-            list = new ArrayList<UserTemplate>();
             entityQuery = new UserQuery(User.class, searchRestriction, query.getStartIndex(), query.getMaxResults());
         }
-        else // assume Entity.GROUP
+        else
         {
             action = "groupMembers";
+            entityQuery = new GroupQuery(Group.class, GroupType.GROUP, searchRestriction, query.getStartIndex(), query.getMaxResults());
+        }
+
+        if (query.getEntityToReturn().getEntityType() == Entity.GROUP)
+        {
             creator = new GroupEntityCreator(getDirectoryId());
             list = new ArrayList<GroupTemplate>();
-            entityQuery = new GroupQuery(Group.class, GroupType.GROUP, searchRestriction, query.getStartIndex(), query.getMaxResults());
+        }
+        else
+        {
+            creator = new UserEntityCreator(getDirectoryId());
+            list = new ArrayList<UserTemplate>();
         }
 
         log.info("crowd-phpbbauth-plugin: entity to return: " + query.getEntityToReturn().toString());
