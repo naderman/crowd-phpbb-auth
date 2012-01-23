@@ -496,7 +496,15 @@ public class phpBBDirectoryServer implements RemoteDirectory
         params.put("action", action);
         params.put("start", new Integer(query.getStartIndex()).toString());
         params.put("max", new Integer(query.getMaxResults()).toString());
-        params.put("returnType", (query.getReturnType() == String.class) ? "NAME" : "ENTITY"); // NAME or ENTITY
+
+        String returnType = (query.getReturnType() == String.class) ? "NAME" : query.getReturnType().toString();
+
+        if (query.getReturnType() == User.class || query.getReturnType() == Group.class)
+        {
+            returnType = "ENTITY";
+        }
+
+        params.put("returnType", returnType); // NAME or ENTITY
 
         SearchRestriction restriction = query.getSearchRestriction();
         if (restriction != null)
@@ -507,6 +515,7 @@ public class phpBBDirectoryServer implements RemoteDirectory
         ArrayList<String> result = sendPostRequest(params);
         if (result.size() > 0)
         {
+            log.info("crowd-phpbbauth-plugin: returnType: " + returnType);
             log.info("crowd-phpbbauth-plugin: result: " + result.get(0));
         }
 
@@ -514,7 +523,7 @@ public class phpBBDirectoryServer implements RemoteDirectory
         {
             String line = (String) it.next();
 
-            if (query.getReturnType() == Group.class || query.getReturnType() == User.class)
+            if (query.getReturnType() != String.class)
             {
                 try
                 {
