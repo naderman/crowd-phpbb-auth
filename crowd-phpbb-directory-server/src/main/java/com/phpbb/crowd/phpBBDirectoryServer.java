@@ -451,13 +451,14 @@ public class phpBBDirectoryServer implements RemoteDirectory
             ArrayList<String> stringList = new ArrayList<String>();
             for (Iterator it = list.iterator(); it.hasNext(); )
             {
-                if (query.getEntityToReturn().getEntityType() == Entity.GROUP)
+                Object x = it.next();
+                if (x instanceof GroupTemplate)
                 {
-                    stringList.add(((GroupTemplate) it.next()).getName());
+                    stringList.add(((GroupTemplate) x).getName());
                 }
                 else
                 {
-                    stringList.add(((UserTemplate) it.next()).getName());
+                    stringList.add(((UserTemplate) x).getName());
                 }
             }
             return stringList;
