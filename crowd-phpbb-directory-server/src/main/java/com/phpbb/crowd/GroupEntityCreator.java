@@ -15,9 +15,8 @@
  */
 package com.phpbb.crowd;
 
-import com.atlassian.crowd.integration.exception.*;
-import com.atlassian.crowd.integration.model.group.*;
-import com.atlassian.crowd.integration.model.AttributeAware;
+import com.atlassian.crowd.exception.*;
+import com.atlassian.crowd.model.group.*;
 
 import com.phpbb.crowd.EntityCreator;
 
@@ -55,10 +54,10 @@ public class GroupEntityCreator extends EntityCreator
     *
     * @param    base    The reguler Group object containing all group data.
     *
-    * @return           An implementation of UserWithAttributes, that contains
+    * @return           An implementation of GroupWithAttributes, that contains
     *                   all the basic data passed in the parameter.
     */
-    public AttributeAware attachAttributes(Object baseObject)
+    public GroupWithAttributes attachAttributes(Object baseObject)
     {
         Group base = (Group) baseObject;
         GroupTemplateWithAttributes group = new GroupTemplateWithAttributes(base.getName(), getDirectoryId(), GroupType.GROUP);

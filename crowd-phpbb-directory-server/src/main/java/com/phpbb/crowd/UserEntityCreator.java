@@ -15,9 +15,8 @@
  */
 package com.phpbb.crowd;
 
-import com.atlassian.crowd.integration.exception.*;
-import com.atlassian.crowd.integration.model.user.*;
-import com.atlassian.crowd.integration.model.AttributeAware;
+import com.atlassian.crowd.exception.*;
+import com.atlassian.crowd.model.user.*;
 
 import com.phpbb.crowd.EntityCreator;
 
@@ -64,10 +63,10 @@ public class UserEntityCreator extends EntityCreator
         }
 
         // avatar might not be set
-        if (values.length > 4 && values[4] != null)
-        {
-            user.setIconLocation(values[4]);
-        }
+//         if (values.length > 4 && values[4] != null)
+//         {
+//             // avatar in values[4]);
+//         }
 
         return user;
     }
@@ -83,7 +82,7 @@ public class UserEntityCreator extends EntityCreator
     * @return           An implementation of UserWithAttributes, that contains
     *                   all the basic data passed in the parameter.
     */
-    public AttributeAware attachAttributes(Object baseObject)
+    public UserWithAttributes attachAttributes(Object baseObject)
     {
         User base = (User) baseObject;
 
@@ -95,7 +94,6 @@ public class UserEntityCreator extends EntityCreator
         user.setName(base.getName());
         user.setEmailAddress(base.getEmailAddress());
         user.setActive(base.isActive());
-        user.setIconLocation(base.getIconLocation());
 
         return user;
     }

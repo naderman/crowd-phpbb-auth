@@ -15,8 +15,7 @@
  */
 package com.phpbb.crowd;
 
-import com.atlassian.crowd.integration.exception.*;
-import com.atlassian.crowd.integration.model.AttributeAware;
+import com.atlassian.crowd.exception.*;
 
 public abstract class EntityCreator
 {
@@ -52,5 +51,4 @@ public abstract class EntityCreator
 
     abstract public int minProperties();
     abstract public Object hydrateObject(String[] values);
-    abstract public AttributeAware attachAttributes(Object baseObject);
 }

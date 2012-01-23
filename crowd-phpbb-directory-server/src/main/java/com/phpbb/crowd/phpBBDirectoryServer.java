@@ -15,18 +15,18 @@
  */
 package com.phpbb.crowd;
 
-import com.atlassian.crowd.integration.SearchContext;
-import com.atlassian.crowd.integration.authentication.PasswordCredential;
-import com.atlassian.crowd.integration.directory.RemoteDirectory;
-import com.atlassian.crowd.integration.exception.*;
-import com.atlassian.crowd.integration.model.*;
-import com.atlassian.crowd.integration.model.user.*;
-import com.atlassian.crowd.integration.model.group.*;
-import com.atlassian.crowd.integration.model.membership.*;
+import com.atlassian.crowd.embedded.api.PasswordCredential;
+import com.atlassian.crowd.directory.RemoteDirectory;
+import com.atlassian.crowd.exception.*;
+import com.atlassian.crowd.model.*;
+import com.atlassian.crowd.model.user.*;
+import com.atlassian.crowd.model.group.*;
+import com.atlassian.crowd.model.membership.*;
 import com.atlassian.crowd.search.query.membership.*;
 import com.atlassian.crowd.search.query.entity.*;
 import com.atlassian.crowd.search.query.entity.restriction.*;
 import com.atlassian.crowd.search.ReturnType;
+import com.atlassian.crowd.embedded.api.SearchRestriction;
 
 import java.rmi.RemoteException;
 import java.util.*;
@@ -87,19 +87,19 @@ public class phpBBDirectoryServer implements RemoteDirectory
         this.attributes = attributes;
     }
 
-    public List<String> getAttributes(String name)
+    public Set<String> getValues(String name)
     {
         log.info("crowd-phpbbauth-plugin: getAttributes: " + name);
-        return new ArrayList<String>();
+        return new HashSet<String>();
     }
 
-    public String getAttribute(String name)
+    public String getValue(String name)
     {
         log.info("crowd-phpbbauth-plugin: getAttribute: " + name);
         return "";
     }
 
-    public Set<String> getAttributeNames()
+    public Set<String> getKeys()
     {
         log.info("crowd-phpbbauth-plugin: getAttributeNames");
         return new HashSet<String>();
@@ -111,20 +111,25 @@ public class phpBBDirectoryServer implements RemoteDirectory
         return false;
     }
 
+    public boolean isEmpty()
+    {
+        return true;
+    }
+
     public User findUserByName(String name)
-        throws ObjectNotFoundException
+        throws UserNotFoundException
     {
         log.info("crowd-phpbbauth-plugin: findUserByName: " + name);
 
-        SearchRestriction searchRestriction = new TermRestriction(new Property("name", String.class), MatchMode.EXACTLY_MATCHES, name);
-        UserQuery query = new UserQuery(searchRestriction, 0, 1); // start, max
+        SearchRestriction searchRestriction = new TermRestriction(new PropertyImpl("name", String.class), MatchMode.EXACTLY_MATCHES, name);
+        UserQuery query = new UserQuery(User.class, searchRestriction, 0, 1); // start, max
 
         List list = new ArrayList<UserTemplate>();
         searchEntities("searchUsers", new UserEntityCreator(getDirectoryId()), query, list);
 
         if (list.size() == 0)
         {
-            throw new ObjectNotFoundException();
+            throw new UserNotFoundException(name);
         }
 
         return (User) list.get(0);
@@ -132,7 +137,7 @@ public class phpBBDirectoryServer implements RemoteDirectory
     }
 
     public UserWithAttributes findUserWithAttributesByName(String name)
-        throws ObjectNotFoundException
+        throws UserNotFoundException, OperationFailedException
     {
         log.info("crowd-phpbbauth-plugin: findUserWithAttributesByName: " + name);
 
@@ -163,7 +168,7 @@ public class phpBBDirectoryServer implements RemoteDirectory
      * @throws   ObjectNotFoundException         Any other errors
      */
     public User authenticate(String name, PasswordCredential credential)
-        throws ObjectNotFoundException, InactiveAccountException, InvalidAuthenticationException
+        throws UserNotFoundException, InactiveAccountException, InvalidAuthenticationException, ExpiredCredentialException, OperationFailedException
     {
         HashMap<String, String> params = new HashMap<String, String>();
         params.put("action", "authenticate");
@@ -174,7 +179,7 @@ public class phpBBDirectoryServer implements RemoteDirectory
 
         if (result.size() < 2)
         {
-            throw new ObjectNotFoundException();
+            throw new UserNotFoundException(name);
         }
 
         log.info("crowd-phpbbauth-plugin: authenticate: " + name);
@@ -187,56 +192,64 @@ public class phpBBDirectoryServer implements RemoteDirectory
 
             if (error.equals("LOGIN_ERROR_ATTEMPTS") || error.equals("ACTIVE_ERROR"))
             {
-                throw new InactiveAccountException();
+                throw new InactiveAccountException(name);
             }
 
-            throw new InvalidAuthenticationException();
+            throw new InvalidAuthenticationException("Username or password are incorrect.");
         }
 
         UserEntityCreator entityCreator = new UserEntityCreator(getDirectoryId());
-        return (User) entityCreator.fromLine(result.get(1));
+        try
+        {
+            User user = (User) entityCreator.fromLine(result.get(1));
+            return user;
+        }
+        catch (ObjectNotFoundException e)
+        {
+            throw new UserNotFoundException(name);
+        }
     }
 
     public User addUser(UserTemplate user, PasswordCredential credential)
-        throws InvalidUserException, ObjectNotFoundException, InvalidCredentialException
+        throws OperationFailedException
     {
-        throw new ObjectNotFoundException();
+        throw new OperationFailedException();
     }
 
     public User updateUser(UserTemplate user)
-        throws InvalidUserException, ObjectNotFoundException
+        throws OperationFailedException
     {
-        throw new ObjectNotFoundException();
+        throw new OperationFailedException();
     }
 
     public void updateUserCredential(String username, PasswordCredential credential)
-        throws ObjectNotFoundException, InvalidCredentialException
+        throws OperationFailedException
     {
-        throw new ObjectNotFoundException();
+        throw new OperationFailedException();
     }
 
     public User renameUser(String oldName, String newName)
-        throws ObjectNotFoundException, InvalidUserException
+        throws OperationFailedException, InvalidUserException
     {
-        throw new ObjectNotFoundException();
+        throw new OperationFailedException();
     }
 
-    public void storeUserAttributes(String username, Map<String,List<String>> attributes)
-        throws ObjectNotFoundException
+    public void storeUserAttributes(String username, Map<String,Set<String>> attributes)
+        throws OperationFailedException
     {
-        throw new ObjectNotFoundException();
+        throw new OperationFailedException();
     }
 
     public void removeUserAttributes(String username, String attributeName)
-        throws ObjectNotFoundException
+        throws OperationFailedException
     {
-        throw new ObjectNotFoundException();
+        throw new OperationFailedException();
     }
 
     public void removeUser(String name)
-        throws ObjectNotFoundException
+        throws OperationFailedException
     {
-        throw new ObjectNotFoundException();
+        throw new OperationFailedException();
     }
 
     public List searchUsers(EntityQuery query)
@@ -250,26 +263,26 @@ public class phpBBDirectoryServer implements RemoteDirectory
     }
 
     public Group findGroupByName(String name)
-        throws ObjectNotFoundException
+        throws GroupNotFoundException
     {
         log.info("crowd-phpbbauth-plugin: findGroupByName: " + name);
 
-        SearchRestriction searchRestriction = new TermRestriction(new Property("name", String.class), MatchMode.EXACTLY_MATCHES, name);
-        GroupQuery query = new GroupQuery(searchRestriction, 0, 1); // start, max
+        SearchRestriction searchRestriction = new TermRestriction(new PropertyImpl("name", String.class), MatchMode.EXACTLY_MATCHES, name);
+        GroupQuery query = new GroupQuery(Group.class, GroupType.GROUP, searchRestriction, 0, 1); // start, max
 
         List list = new ArrayList<GroupTemplate>();
         searchEntities("searchGroups", new GroupEntityCreator(getDirectoryId()), query, list);
 
         if (list.size() == 0)
         {
-            throw new ObjectNotFoundException();
+            throw new GroupNotFoundException(name);
         }
 
         return (Group) list.get(0);
     }
 
     public GroupWithAttributes findGroupWithAttributesByName(String name)
-        throws ObjectNotFoundException
+        throws OperationFailedException, GroupNotFoundException
     {
         log.info("crowd-phpbbauth-plugin: findGroupWithAttributesByName: " + name);
 
@@ -280,39 +293,39 @@ public class phpBBDirectoryServer implements RemoteDirectory
     }
 
     public Group addGroup(GroupTemplate group)
-        throws InvalidGroupException, ObjectNotFoundException
+        throws OperationFailedException
     {
-        throw new ObjectNotFoundException();
+        throw new OperationFailedException();
     }
 
     public Group updateGroup(GroupTemplate group)
-        throws InvalidGroupException, ObjectNotFoundException
+        throws ReadOnlyGroupException
     {
-        throw new ObjectNotFoundException();
+        throw new ReadOnlyGroupException(group.getName());
     }
 
     public Group renameGroup(String oldName, String newName)
-        throws ObjectNotFoundException, InvalidGroupException
+        throws OperationFailedException
     {
-        throw new ObjectNotFoundException();
+        throw new OperationFailedException();
     }
 
-    public void storeGroupAttributes(String groupName, Map<String,List<String>> attributes)
-        throws ObjectNotFoundException
+    public void storeGroupAttributes(String groupName, Map<String,Set<String>> attributes)
+        throws OperationFailedException
     {
-        throw new ObjectNotFoundException();
+        throw new OperationFailedException();
     }
 
     public void removeGroupAttributes(String groupName, String attributeName)
-        throws ObjectNotFoundException
+        throws OperationFailedException
     {
-        throw new ObjectNotFoundException();
+        throw new OperationFailedException();
     }
 
     public void removeGroup(String name)
-        throws ObjectNotFoundException
+        throws ReadOnlyGroupException
     {
-        throw new ObjectNotFoundException();
+        throw new ReadOnlyGroupException(name);
     }
 
     public List searchGroups(EntityQuery query)
@@ -330,31 +343,30 @@ public class phpBBDirectoryServer implements RemoteDirectory
         log.info("crowd-phpbbauth-plugin: isUserDirectGroupMember: " + username + ", " + groupName);
         EntityCreator creator;
         List list;
-        EntityQuery entityQuery;
+        UserQuery userQuery;
 
         SearchRestriction searchRestrictionUser = new TermRestriction(
-            new Property("name", String.class),
+            new PropertyImpl("name", String.class),
             MatchMode.EXACTLY_MATCHES,
             username
         );
 
         SearchRestriction searchRestrictionGroup = new TermRestriction(
-            new Property("groupname", String.class),
+            new PropertyImpl("groupname", String.class),
             MatchMode.EXACTLY_MATCHES,
             groupName
         );
 
-        SearchRestriction searchRestriction = new MultiTermRestriction(
-            MultiTermRestriction.BooleanLogic.AND,
+        SearchRestriction searchRestriction = new BooleanRestrictionImpl(
+            BooleanRestriction.BooleanLogic.AND,
             searchRestrictionUser,
             searchRestrictionGroup
         );
 
         list = new ArrayList<String>();
-        entityQuery = new GroupQuery(searchRestriction, 0, 1); // start, max
-        entityQuery = new EntityQuery(entityQuery, ReturnType.NAME);
+        userQuery = new UserQuery(String.class, searchRestriction, 0, 1); // start, max
 
-        searchEntities("userMemberships", null, entityQuery, list);
+        searchEntities("userMemberships", null, userQuery, list);
 
         if (list.size() > 0)
         {
@@ -375,27 +387,27 @@ public class phpBBDirectoryServer implements RemoteDirectory
     }
 
     public void addUserToGroup(String username, String groupName)
-        throws ObjectNotFoundException
+        throws ReadOnlyGroupException
     {
-        throw new ObjectNotFoundException();
+        throw new ReadOnlyGroupException(groupName);
     }
 
     public void addGroupToGroup(String childGroup, String parentGroup)
-        throws ObjectNotFoundException, InvalidMembershipException
+        throws ReadOnlyGroupException
     {
-        throw new ObjectNotFoundException();
+        throw new ReadOnlyGroupException(parentGroup);
     }
 
     public void removeUserFromGroup(String username, String groupName)
-        throws ObjectNotFoundException, MembershipNotFoundException
+        throws ReadOnlyGroupException
     {
-        throw new ObjectNotFoundException();
+        throw new ReadOnlyGroupException(groupName);
     }
 
     public void removeGroupFromGroup(String childGroup, String parentGroup)
-        throws ObjectNotFoundException, InvalidMembershipException, MembershipNotFoundException
+        throws MembershipNotFoundException
     {
-        throw new ObjectNotFoundException();
+        throw new MembershipNotFoundException(childGroup, parentGroup);
     }
 
     public List searchGroupRelationships(MembershipQuery query)
@@ -408,32 +420,32 @@ public class phpBBDirectoryServer implements RemoteDirectory
         String action;
 
         SearchRestriction searchRestriction = new TermRestriction(
-            new Property("name", String.class),
+            new PropertyImpl("name", String.class),
             MatchMode.EXACTLY_MATCHES,
             query.getEntityNameToMatch()
         );
 
         //if (query.getEntityToMatch().getEntityType() == Entity.GROUP)
-        if (query.isFindMembers())
+        if (query instanceof UserMembersOfGroupQuery)
         {
             action = "groupMembers";
             creator = new UserEntityCreator(getDirectoryId());
             list = new ArrayList<UserTemplate>();
-            entityQuery = new UserQuery(searchRestriction, query.getStartIndex(), query.getMaxResults());
+            entityQuery = new UserQuery(User.class, searchRestriction, query.getStartIndex(), query.getMaxResults());
         }
         else // assume Entity.USER
         {
             action = "userMemberships";
             creator = new GroupEntityCreator(getDirectoryId());
             list = new ArrayList<GroupTemplate>();
-            entityQuery = new GroupQuery(searchRestriction, query.getStartIndex(), query.getMaxResults());
+            entityQuery = new GroupQuery(Group.class, GroupType.GROUP, searchRestriction, query.getStartIndex(), query.getMaxResults());
         }
-
+        /*
         if (query.getReturnType() != ReturnType.ENTITY)
         {
             list = new ArrayList<String>();
             entityQuery = new EntityQuery(entityQuery, query.getReturnType());
-        }
+        }*/
 
         searchEntities(action, creator, entityQuery, list);
 
@@ -441,7 +453,7 @@ public class phpBBDirectoryServer implements RemoteDirectory
     }
 
     public void testConnection()
-        throws DirectoryAccessException
+        throws OperationFailedException
     {
         // could implement a simple http request here
     }
@@ -454,6 +466,27 @@ public class phpBBDirectoryServer implements RemoteDirectory
     public boolean supportsNestedGroups()
     {
         return false;
+    }
+
+    public RemoteDirectory getAuthoritativeDirectory()
+    {
+        return (RemoteDirectory) this;
+    }
+
+    public Iterable<Membership> getMemberships()
+        throws OperationFailedException
+    {
+         throw new OperationFailedException();
+    }
+
+    public boolean isRolesDisabled()
+    {
+        return true;
+    }
+
+    public boolean supportsInactiveAccounts()
+    {
+        return true;
     }
 
     protected void searchEntities(String action, EntityCreator entityCreator, EntityQuery query, List list)
@@ -480,7 +513,7 @@ public class phpBBDirectoryServer implements RemoteDirectory
         {
             String line = (String) it.next();
 
-            if (query.getReturnType() == ReturnType.ENTITY || query instanceof UserQuery)
+            if (query.getReturnType() == Group.class || query.getReturnType() == User.class)
             {
                 try
                 {
@@ -507,11 +540,11 @@ public class phpBBDirectoryServer implements RemoteDirectory
         {
             TermRestriction termRestriction = (TermRestriction) restriction;
 
-            return "{\"mode\": \"" + termRestriction.getMatchMode().toString() + "\", \"property\": \"" + escape(termRestriction.getPropertyName()) + "\", \"value\": \"" + escape(termRestriction.getValue().toString()) + "\"}";
+            return "{\"mode\": \"" + termRestriction.getMatchMode().toString() + "\", \"property\": \"" + escape(termRestriction.getProperty().getPropertyName()) + "\", \"value\": \"" + escape(termRestriction.getValue().toString()) + "\"}";
         }
-        else if (restriction instanceof MultiTermRestriction)
+        else if (restriction instanceof BooleanRestrictionImpl)
         {
-            MultiTermRestriction multiTermRestriction = (MultiTermRestriction) restriction;
+            BooleanRestrictionImpl multiTermRestriction = (BooleanRestrictionImpl) restriction;
             Collection<SearchRestriction> restrictions = multiTermRestriction.getRestrictions();
 
             String result = "{\"boolean\": \"" + multiTermRestriction.getBooleanLogic().toString() + "\", \"terms\": [";
@@ -528,10 +561,6 @@ public class phpBBDirectoryServer implements RemoteDirectory
             result += "]}";
 
             return result;
-        }
-        else if (restriction instanceof MutableMultiTermRestriction)
-        {
-            return restrictionToJson(((MutableMultiTermRestriction) restriction).getSearchRestriction());
         }
 
         return "null";
