@@ -449,6 +449,23 @@ public class phpBBDirectoryServer implements RemoteDirectory
 
         searchEntities(action, creator, entityQuery, list);
 
+        if (query.getReturnType() == String.class)
+        {
+            ArrayList<String> stringList = new ArrayList<String>();
+            for (Iterator it = list.iterator(); it.hasNext(); )
+            {
+                if (query instanceof UserMembersOfGroupQuery)
+                {
+                    stringList.add(((GroupTemplate) it.next()).getName());
+                }
+                else
+                {
+                    stringList.add(((UserTemplate) it.next()).getName());
+                }
+            }
+            return stringList;
+        }
+
         return list;
     }
 
