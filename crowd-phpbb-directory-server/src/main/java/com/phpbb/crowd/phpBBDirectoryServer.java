@@ -496,7 +496,7 @@ public class phpBBDirectoryServer implements RemoteDirectory
         params.put("action", action);
         params.put("start", new Integer(query.getStartIndex()).toString());
         params.put("max", new Integer(query.getMaxResults()).toString());
-        params.put("returnType", query.getReturnType().toString()); // NAME or ENTITY
+        params.put("returnType", (query.getReturnType() == String.class) ? "NAME" : "ENTITY"); // NAME or ENTITY
 
         SearchRestriction restriction = query.getSearchRestriction();
         if (restriction != null)
