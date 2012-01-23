@@ -476,7 +476,8 @@ public class phpBBDirectoryServer implements RemoteDirectory
     public Iterable<Membership> getMemberships()
         throws OperationFailedException
     {
-         throw new OperationFailedException();
+        log.info("crowd-phpbbauth-plugin: getMemberships");
+        throw new OperationFailedException();
     }
 
     public boolean isRolesDisabled()
