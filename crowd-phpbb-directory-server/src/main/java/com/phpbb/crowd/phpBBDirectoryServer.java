@@ -428,14 +428,14 @@ public class phpBBDirectoryServer implements RemoteDirectory
 
         if (query.getEntityToMatch().getEntityType() != Entity.GROUP)
         {
-            action = "groupMembers";
+            action = "userMemberships";
             creator = new UserEntityCreator(getDirectoryId());
             list = new ArrayList<UserTemplate>();
             entityQuery = new UserQuery(User.class, searchRestriction, query.getStartIndex(), query.getMaxResults());
         }
         else // assume Entity.GROUP
         {
-            action = "userMemberships";
+            action = "groupMembers";
             creator = new GroupEntityCreator(getDirectoryId());
             list = new ArrayList<GroupTemplate>();
             entityQuery = new GroupQuery(Group.class, GroupType.GROUP, searchRestriction, query.getStartIndex(), query.getMaxResults());
@@ -451,7 +451,7 @@ public class phpBBDirectoryServer implements RemoteDirectory
             ArrayList<String> stringList = new ArrayList<String>();
             for (Iterator it = list.iterator(); it.hasNext(); )
             {
-                if (query instanceof UserMembersOfGroupQuery)
+                if (query.getEntityToReturn().getEntityType() == Entity.GROUP)
                 {
                     stringList.add(((GroupTemplate) it.next()).getName());
                 }
