@@ -292,7 +292,9 @@ class phpbb_auth_api
 
 			if ($last_logged_in)
 			{
+				$include_user_ids = isset($this->config['include_user_ids']) ? $this->config['include_user_ids'] : array();
 				$this->user_query_sql[] = array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in);
+				//$this->user_query_sql[] = array(array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in), array('key' => 'user_id', 'query' => 'IN (' . implode(', ', $include_user_ids) . ')'));
 			}
 		}
 
@@ -305,10 +307,22 @@ class phpbb_auth_api
 		$sql_ary = array();
 		foreach ($this->user_query_sql as $query)
 		{
-			$sql_ary[] = (($sql_alias) ? $sql_alias . '.' : '') . $query['key'] . ' ' . $query['query'];
+			if (!isset($query[0]))
+			{
+				$query = array($query);
+			}
+			$or_ary = array();
+			foreach ($query as $or_clause)
+			{
+				$or_ary[] = (($sql_alias) ? $sql_alias . '.' : '') . $or_clause['key'] . ' ' . $or_clause['query'];
+			}
+			$sql_ary[] = '( ' . implode(' OR ', $or_ary) . ' ) ';
 		}
 
-		return (($sql_prefix) ? ' ' . $sql_prefix . ' ' : '') . implode(' AND ', $sql_ary);
+		$q = (($sql_prefix) ? ' ' . $sql_prefix . ' ' : '') . implode(' AND ', $sql_ary);
+		// call $this->debug ;) See crowd logs for what can happen if there are php notices here
+		//if ($this->fp) fwrite($this->fp, $q."\n");
+		return $q;
 	}
 
 	protected function get_user_name($user_name)
@@ -815,9 +829,6 @@ class SearchRestriction
 		{
 			return '';
 		}
-
-		// Because we decoded the search restriction but phpBB always stores speciachar'd content we need to specialchar all values before we use them
-		$value = utf8_htmlspecialchars($value);
 
 		$where = $column . ' ';
 
