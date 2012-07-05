@@ -293,8 +293,12 @@ class phpbb_auth_api
 			if ($last_logged_in)
 			{
 				$include_user_ids = isset($this->config['include_user_ids']) ? $this->config['include_user_ids'] : array();
-				$this->user_query_sql[] = array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in);
-				//$this->user_query_sql[] = array(array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in), array('key' => 'user_id', 'query' => 'IN (' . implode(', ', $include_user_ids) . ')'));
+				//$this->user_query_sql[] = array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in);
+				$this->user_query_sql[] = array(
+					array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in),
+					array('key' => 'user_lastvisit', 'query' => ' = 0'),
+					array('key' => 'user_id', 'query' => ' IN (' . implode(', ', $include_user_ids) . ')')
+				);
 			}
 		}
 
