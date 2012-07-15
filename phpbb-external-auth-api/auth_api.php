@@ -296,7 +296,7 @@ class phpbb_auth_api
 				//$this->user_query_sql[] = array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in);
 				$this->user_query_sql[] = array(
 					array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in),
-					array('key' => 'user_lastvisit', 'query' => ' = 0'),
+					array('key' => 'user_regdate', 'query' => ' > ' . $last_logged_in), // for users with user_lastvisit = 0
 					array('key' => 'user_id', 'query' => ' IN (' . implode(', ', $include_user_ids) . ')')
 				);
 			}
