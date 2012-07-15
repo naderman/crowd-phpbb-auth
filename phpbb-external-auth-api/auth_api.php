@@ -294,11 +294,18 @@ class phpbb_auth_api
 			{
 				$include_user_ids = isset($this->config['include_user_ids']) ? $this->config['include_user_ids'] : array();
 				//$this->user_query_sql[] = array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in);
-				$this->user_query_sql[] = array(
+
+				$user_query_sql_next = array(
 					array('key' => 'user_lastvisit', 'query' => ' > ' . $last_logged_in),
 					array('key' => 'user_regdate', 'query' => ' > ' . $last_logged_in), // for users with user_lastvisit = 0
-					array('key' => 'user_id', 'query' => ' IN (' . implode(', ', $include_user_ids) . ')')
 				);
+
+				if ($include_user_ids)
+				{
+					$user_query_sql_next[] = array('key' => 'user_id', 'query' => ' IN (' . implode(', ', $include_user_ids) . ')');
+				}
+
+				$this->user_query_sql[] = $user_query_sql_next;
 			}
 		}
 
