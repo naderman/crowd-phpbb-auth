@@ -358,7 +358,9 @@ class phpbb_auth_api
 		$err = '';
 
 		// If authentication is successful we redirect user to previous page
-		$method = trim(basename($config['auth_method']));
+		//$method = trim(basename($config['auth_method']));
+		// hardcode db auth method
+		$method = 'db';
 		include_once($phpbb_root_path . 'includes/auth/auth_' . $method . '.' . $phpEx);
 
 		$method = 'login_' . $method;
